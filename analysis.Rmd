@@ -1,0 +1,209 @@
+---
+title: "Analysis"
+author: "Amy Duan"
+date: "2026-11-21"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+
+heli <- read_csv("helicopter_data.csv")
+heli <- heli |>
+  mutate(
+    A = 2 * A_rotor_length - 1,
+    B = 2 * B_leg_length   - 1,
+    C = 2 * C_leg_width    - 1,
+    D = 2 * D_paper_clip   - 1
+  )
+
+```
+
+## Design recap
+
+We ran a **half fraction of a $2^4$ factorial** ($2^{4-1} = 8$ runs), with 4 flights per run (32 flights total).
+
+| Letter | Factor |
+|---|---|
+| A | Rotor length |
+| B | Leg length |
+| C | Leg width |
+| D | Paper clip on leg |
+
+The half fraction we flew is $\{(1), ab, ac, ad, bc, bd, cd, abcd\}$, which has the defining relation $I = ABCD$ (resolution IV). This gives the alias structure:
+
+| Effect | Aliased with |
+|---|---|
+| A | BCD |
+| B | ACD |
+| C | ABD |
+| D | ABC |
+| AB | CD |
+| AC | BD |
+| AD | BC |
+
+## Assumptions 
+
+1. **Three-factor interactions are negligible.** Each main effect is aliased with a three-way interaction (e.g., A with BCD). We cannot separate them with this design, so the estimate labelled "main effect of A" is really A + BCD. Three-way interactions are usually much smaller than main effects (effect sparsity / hierarchy), so we attribute the whole contrast to the main effect. The four-factor interaction ABCD is the defining contrast and is not estimable.
+2. **The model contains main effects only.** Two-factor interactions are aliased with each other (AB = CD, AC = BD, AD = BC), so we cannot estimate them individually. We drop them from the model for Question 1. If a two-factor interaction were large, it would **not** bias the main effects (that is the benefit of resolution IV), but it would inflate the residual variance, making our intervals conservative.
+3. **Paper clip $\times$ leg length (BD) is negligible.** This is the assumption we make for Question 2, since BD is aliased with rotor length $\times$ leg width (AC).
+4. **Flights are independent with constant variance, and errors are roughly normal.** The 95% CIs below treat all 32 flights as independent observations. 
+5. **Randomization.** Flight order was randomized, so that drift is not confounded with the factors.
+
+Each design point is realized by one helicopter that was flown 4 times. The 4 flights per run measure flight-to-flight variability but not helicopter-to-helicopter (build-to-build) variability. Build quality is therefore confounded with the factor settings, and the CIs below are probably somewhat too narrow. We interpret them as a guide, not as exact error rates.
+
+## EDA
+
+```{r}
+run_summary <- heli |>
+  group_by(unit, A_rotor_length, B_leg_length, C_leg_width, D_paper_clip) |>
+  summarise(mean_time = mean(time_s), sd_time = sd(time_s), n = n(), .groups = "drop")
+run_summary
+```
+
+```{r}
+ggplot(heli, aes(factor(unit), time_s)) +
+  geom_point(alpha = 0.6) +
+  stat_summary(fun = mean, geom = "point", colour = "red", size = 3) +
+  labs(x = "Run (design point)", y = "Time in air (s)",
+       title = "Flight times by run (red = run mean)")
+```
+
+Within-run variability is similar across runs (SD roughly 0.15-0.4 s), and no flight stands out as an outlier.
+
+## Estimating Main Effects
+
+```{r}
+fit <- lm(time_s ~ A + B + C + D, data = heli)
+
+# With +/-1 coding, the factorial effect is 2 * coefficient
+effects_tbl <- function(fit) {
+  ci <- confint(fit)
+  coefs <- coef(fit)
+  tibble(
+    term = names(coefs),
+    effect = 2 * coefs,
+    lower  = 2 * ci[, 1],
+    upper  = 2 * ci[, 2],
+    p_value = summary(fit)$coefficients[, 4]
+  ) |>
+    filter(term != "(Intercept)") |>
+    mutate(across(c(effect, lower, upper), \(x) round(x, 3)),
+           p_value = round(p_value, 3),
+           factor = recode(term, A = "Rotor length", B = "Leg length",
+                           C = "Leg width", D = "Paper clip"))
+}
+
+effects_all <- effects_tbl(fit)
+effects_all
+```
+
+```{r}
+effects_all |>
+  ggplot(aes(effect, factor)) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange(aes(xmin = lower, xmax = upper)) +
+  labs(x = "Effect on time in air (s), high vs. low setting",
+       y = NULL, title = "Main effects with 95% confidence intervals")
+```
+
+## Model Diagnostics
+
+```{r}
+par(mfrow = c(1, 2))
+plot(fit, which = 1:2)
+```
+
+```{r}
+fit_means <- lm(mean_time ~ I(2 * A_rotor_length - 1) + I(2 * B_leg_length - 1) +
+                  I(2 * C_leg_width - 1) + I(2 * D_paper_clip - 1),
+                data = run_summary)
+round(2 * cbind(coef(fit_means), confint(fit_means))[-1, ], 3)
+```
+
+## Question 1
+
+Each effect is the average change in flight time (seconds) when a factor moves from its low to its high setting, averaged over the settings of the other three factors, estimated from the half fraction.
+
+| Factor | Effect (s) | 95% CI | p-value |
+|---|---|---|---|
+| Rotor length (A) | -0.07 | (-0.28, 0.13) | 0.47 |
+| Leg length (B) | +0.21 | (0.01, 0.42) | 0.045 |
+| Leg width (C) | +0.20 | (-0.00, 0.41) | 0.055 |
+| Paper clip (D) | -0.04 | (-0.25, 0.17) | 0.70 |
+
+**Interpretation.** Leg length and leg width appear to be the most important factors: moving either from its low to its high setting is associated with about 0.2 s longer flights. The interval for leg length just excludes 0, and the interval for leg width only barely includes 0, so the evidence for each is borderline rather than strong. Rotor length and paper clip show little evidence of an effect, with estimates near 0 and intervals that comfortably include 0.
+
+With only 8 runs and flight-to-flight SD of about 0.29 s, power is limited, so these should be read as suggestive. As a robustness check, the model fit to the 8 run means (the helicopter-level analysis, only 3 residual df) gives essentially the same point estimates but much wider intervals that all include 0. That is the expected cost of not treating the 4 flights per helicopter as independent, and it highlights the build-to-build caveat above.
+
+All of this rests on the assumptions above: in particular, that three-factor interactions are negligible (so each main-effect contrast is not contaminated by its alias), and that the flights can be treated as independent replicates despite each design point being a single helicopter.
+
+## Question 2
+
+In our half fraction ($I = ABCD$), A x C is aliased with B x D (leg length x paper clip). So the estimated "A x C" contrast is really A x C + B x D. We can only attribute it to rotor length x leg width if we assume paper clip x leg length (B x D) is negligibl*. We justify this because the paper clip and leg length act on different parts of the helicopter, and there is no physical reason to expect the benefit of one to depend strongly on the other. If this assumption is wrong, the estimate below would be a mix of the two interactions.
+
+```{r}
+fit_int <- lm(time_s ~ A + B + C + D + A:C, data = heli)
+
+ci_int <- confint(fit_int)["A:C", ]
+tibble(
+  effect = 2 * coef(fit_int)["A:C"],
+  lower  = 2 * ci_int[1],
+  upper  = 2 * ci_int[2],
+  p_value = summary(fit_int)$coefficients["A:C", 4]
+) |> mutate(across(everything(), \(x) round(x, 3)))
+```
+
+```{r}
+# Effect of rotor length at each leg width (simple effects)
+heli |>
+  group_by(leg_width = C_leg_width, rotor_length = A_rotor_length) |>
+  summarise(m = mean(time_s), .groups = "drop") |>
+  pivot_wider(names_from = rotor_length, values_from = m, names_prefix = "rotor_") |>
+  mutate(effect_of_rotor = rotor_1 - rotor_0)
+```
+
+The estimated interaction is -0.12 s (95% CI: -0.32 to 0.09; p = 0.25). Put another way, going from short to long rotors changes flight time by about +0.04 s when legs are narrow but about -0.19 s when legs are wide, so the rotor effect has a different sign at the two leg widths. However, the confidence interval comfortably includes 0, so there is no clear statistical evidence that the effect of rotor length differs by leg widt*. The pattern is suggestive (longer rotors may be slightly worse with wide legs), but with only 8 runs we cannot distinguish it from noise.
+
+## Question 3
+
+The half fraction only flew 8 of the 16 possible combinations: $\{(1), ab, ac, ad, bc, bd, cd, abcd\}$. We never flew the other 8, so we recommend a combination from the 8 we flew. Under the main-effects model, a combination outside our fraction could be predicted to do slightly better or worse, but that would be an extrapolation that relies on the three-factor and two-factor interactions being negligible, and we have no direct data to support it.
+
+We compare the 8 flown combinations using both the observed run means and the fitted values from the main-effects model (which pools information across runs and is less noisy than a single run mean).
+
+```{r}
+X_new <- run_summary |>
+  mutate(A = 2 * A_rotor_length - 1, B = 2 * B_leg_length - 1,
+         C = 2 * C_leg_width - 1,    D = 2 * D_paper_clip - 1)
+
+pred <- predict(fit, newdata = X_new, interval = "confidence")
+
+run_summary |>
+  select(unit, A_rotor_length, B_leg_length, C_leg_width, D_paper_clip, mean_time) |>
+  bind_cols(as_tibble(pred)) |>
+  mutate(across(c(mean_time, fit, lwr, upr), \(x) round(x, 3))) |>
+  arrange(desc(fit))
+```
+
+```{r}
+run_summary |>
+  mutate(label = paste0("A", A_rotor_length, " B", B_leg_length,
+                        " C", C_leg_width, " D", D_paper_clip),
+         label = reorder(label, mean_time)) |>
+  ggplot(aes(mean_time, label)) +
+  geom_point(size = 3) +
+  labs(x = "Mean time in air (s)", y = "Combination (0 = low, 1 = high)",
+       title = "Observed mean flight time for the 8 combinations flown")
+```
+
+**Recommendation:** Use short rotors, long legs, wide legs and no paper clip on the leg (A low, B high, C high, D low; run 5, i.e. $bc$). This is the combination with the highest fitted value under the main-effects model: about 1.88 s (95% CI 1.65 to 2.11. It also matches the Question 1 results, since it sets the two factors that seemed important (leg length and leg width) to their high settings and the two apparently unimportant factors to their lower-effect settings. Its observed mean was 1.78 s.
+
+- Differences among the top runs (about 0.05 to 0.1 s) are much smaller than the flight-to-flight SD (about 0.29 s), and the confidence intervals for the best four combinations overlap heavily, so we cannot claim that the recommended combination is definitely the best of the 8.
+- Because each design point is one helicopter, build-to-build variation is mixed in with the factor effects, and the intervals above are probably too narrow.
+- A follow-up experiment that flies the other half fraction would be needed to confirm this recommendation.
