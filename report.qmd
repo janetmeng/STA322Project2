@@ -149,7 +149,7 @@ We code each factor as $-1$ at its low setting and $+1$ at its high setting. A t
 
 The full $2^4$ factorial has 16 treatment combinations, which would mean building 16 helicopters. We instead ran a **half replicate**, a $2^{4-1}$ fractional factorial design with 8 treatment combinations.
 
-We chose the 8 combinations with the strategy from class. The **defining contrast** is the highest-order interaction, ABCD. In a full $2^4$ factorial, the four-way interaction would be estimated by
+We chose the 8 combinations the following way. The **defining contrast** is the highest-order interaction, ABCD. In a full $2^4$ factorial, the four-way interaction would be estimated by
 $$
 \begin{aligned}
 \hat\beta_{ABCD} = {} & \bar y_{abcd} + \bar y_{ab} + \bar y_{ac} + \bar y_{ad} + \bar y_{bc} + \bar y_{bd} + \bar y_{cd} + \bar y_{(1)} \\
@@ -160,7 +160,7 @@ Our half replicate is the 8 combinations that enter this estimate with a positiv
 $$\{(1),\ ab,\ ac,\ ad,\ bc,\ bd,\ cd,\ abcd\}.$$
 These are the combinations with an even number of factors at the high setting.
 
-Because we observe only 8 of the 16 combinations, some effects are **aliased**: their estimates come from the same contrast of the 8 means, so the data cannot tell them apart. Using the rule from class, the effect aliased with any term is made up of the letters in the defining contrast ABCD that are not in that term. For example, A is aliased with BCD, and AC is aliased with BD.
+Because we observe only 8 of the 16 combinations, some effects are **aliased**: their estimates come from the same contrast of the 8 means, so the data cannot tell them apart. The effect aliased with any term is made up of the letters in the defining contrast ABCD that are not in that term. For example, A is aliased with BCD, and AC is aliased with BD.
 
 | Effect | Aliased with | | Effect | Aliased with |
 |:---:|:---:|---|:---:|:---:|
@@ -179,7 +179,7 @@ Each of the 8 treatment combinations was built once, as a single helicopter, and
 
 ### Building the helicopters
 
-We built the 8 helicopters from regular printer paper following the course instructions. Each helicopter is a 5 cm-wide strip cut to a length of rotor length + leg length + 2 cm for the body. We made the leg cuts and folded legs A and C onto leg B to the required leg width, then folded the two rotor blades in opposite directions at 90° to the body. For the four combinations with factor D at its high setting ($ad$, $bd$, $cd$, $abcd$), we attached a paper clip to the bottom of the leg. Each helicopter was labeled with its unit number (1–8).
+We built the 8 helicopters from regular notebook paper. Each helicopter is a 5 cm-wide strip cut to a length of rotor length + leg length + 2 cm for the body. We made the leg cuts and folded legs A and C onto leg B to the required leg width, then folded the two rotor blades in opposite directions at 90° to the body. For the four combinations with factor D at its high setting ($ad$, $bd$, $cd$, $abcd$), we attached a paper clip to the bottom of the leg. Each helicopter was labeled with its unit number (1–8).
 
 ### Flying procedure
 
@@ -195,8 +195,8 @@ We flew the helicopters in unit order, from Helicopter 1 to Helicopter 8, and dr
 
 The most time-consuming part of the experiment was building helicopters, not flying them. A half replicate halves the number of helicopters to build while still estimating all four main effects, which are the focus of Questions 1 and 3. The cost is aliasing, and we chose the half replicate to keep that cost as small as possible:
 
-- **Every main effect uses all 32 flights.** In our half replicate, each factor is at its high setting in 4 of the 8 combinations and at its low setting in the other 4. For example, the main effect of rotor length is estimated by comparing the average of $ab$, $ac$, $ad$, $abcd$ with the average of $(1)$, $bc$, $bd$, $cd$. This is the same reason that, in class, the replicate $\{a, b, c, abc\}$ was preferred to $\{(1), a, b, c\}$. In the second design, the effect of A can be estimated only from $\bar y_a - \bar y_{(1)}$, which uses half of the data.
-- **Main effects are aliased only with three-way interactions.** As in class, we presume the three-way interactions are negligible, so we can attribute each contrast to the main effect. (The other half, the 8 combinations with a negative sign in $\hat\beta_{ABCD}$, has the same aliasing. We used the positive-sign half, as in class.)
+- **Every main effect uses all 32 flights.** In our half replicate, each factor is at its high setting in 4 of the 8 combinations and at its low setting in the other 4. For example, the main effect of rotor length is estimated by comparing the average of $ab$, $ac$, $ad$, $abcd$ with the average of $(1)$, $bc$, $bd$, $cd$. This is the same reason that the replicate $\{a, b, c, abc\}$ was preferred to $\{(1), a, b, c\}$. In the second design, the effect of A can be estimated only from $\bar y_a - \bar y_{(1)}$, which uses half of the data.
+- **Main effects are aliased only with three-way interactions.** We presume the three-way interactions are negligible, so we can attribute each contrast to the main effect. (The other half, the 8 combinations with a negative sign in $\hat\beta_{ABCD}$, has the same aliasing. We used the positive-sign half.)
 - **Question 2 needs the AC interaction.** In our half replicate, AC (rotor length $\times$ leg width) is aliased with BD (leg length $\times$ paper clip). This is true for either half built from the defining contrast ABCD. AC is aliased with a two-way interaction that we have a physical reason to treat as small (see Question 2), not with a main effect.
 - **A full factorial would mostly add information we do not need.** The extra 8 helicopters would separate the two-way interactions from each other and estimate the three-way interactions, but the questions ask about only one two-way interaction (AC).
 
