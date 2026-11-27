@@ -1,1 +1,371 @@
-This is our report.
+---
+title: "STA 322 Project 2: What Makes a Paper Helicopter Fly Longer?"
+author: "Janet Meng and Amy Duan"
+date: "December 4, 2026"
+format:
+  pdf:
+    documentclass: article
+    shift-heading-level-by: -1
+    geometry: margin=0.9in
+    fontsize: 11pt
+    linestretch: 1.05
+    header-includes: |
+      \usepackage{titling}
+      \setlength{\droptitle}{-4em}
+      \pretitle{\centering\LARGE\bfseries}
+      \posttitle{\par\vspace{0.4em}}
+      \preauthor{\centering\normalsize}
+      \postauthor{\par\vspace{0.1em}}
+      \predate{\centering\normalsize}
+      \postdate{\par\vspace{0.2em}}
+      \usepackage{titlesec}
+      \titleformat*{\section}{\Large\bfseries}
+      \titleformat*{\subsection}{\large\bfseries}
+      \titleformat*{\subsubsection}{\normalsize\bfseries}
+      \titlespacing*{\section}{0pt}{14pt}{6pt}
+      \titlespacing*{\subsection}{0pt}{10pt}{4pt}
+      \titlespacing*{\subsubsection}{0pt}{8pt}{2pt}
+      \usepackage{enumitem}
+      \setlist{itemsep=2pt, topsep=3pt, leftmargin=*}
+      \setlength{\parskip}{4pt}
+      \usepackage{float}
+      \floatplacement{figure}{H}
+      \floatplacement{table}{H}
+execute:
+  echo: false
+  message: false
+  warning: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(tidyverse)
+library(knitr)
+
+heli <- read_csv("helicopter_data.csv")
+
+# +/-1 coding: low setting = -1, high setting = +1
+heli <- heli |>
+  mutate(
+    A = 2 * A_rotor_length - 1,
+    B = 2 * B_leg_length   - 1,
+    C = 2 * C_leg_width    - 1,
+    D = 2 * D_paper_clip   - 1
+  )
+
+run_summary <- heli |>
+  group_by(unit, A_rotor_length, B_leg_length, C_leg_width, D_paper_clip) |>
+  summarise(mean_time = mean(time_s), sd_time = sd(time_s), n = n(),
+            .groups = "drop")
+
+# Main-effects model (Question 1). With +/-1 coding, effect = 2 * coefficient.
+fit <- lm(time_s ~ A + B + C + D, data = heli)
+
+effects_tbl <- function(fit, terms = c("A", "B", "C", "D")) {
+  ci <- confint(fit)
+  tibble(
+    term    = terms,
+    effect  = 2 * coef(fit)[terms],
+    lower   = 2 * ci[terms, 1],
+    upper   = 2 * ci[terms, 2],
+    p_value = summary(fit)$coefficients[terms, 4]
+  ) |>
+    mutate(factor = recode(term, A = "Rotor length", B = "Leg length",
+                           C = "Leg width", D = "Paper clip",
+                           `A:C` = "Rotor length x leg width"))
+}
+effects_all <- effects_tbl(fit)
+sigma_hat <- summary(fit)$sigma
+
+# Robustness 1: analysis of the 8 helicopter means
+fit_means <- lm(mean_time ~ I(2 * A_rotor_length - 1) + I(2 * B_leg_length - 1) +
+                  I(2 * C_leg_width - 1) + I(2 * D_paper_clip - 1),
+                data = run_summary)
+means_eff <- 2 * cbind(coef(fit_means), confint(fit_means))[-1, ]
+
+# Robustness 2: flight number (1st-4th drop of a helicopter) as a block
+fit_blk <- lm(time_s ~ A + B + C + D + factor(flight), data = heli)
+effects_blk <- effects_tbl(fit_blk)
+flight_means <- heli |> group_by(flight) |> summarise(m = mean(time_s))
+flight_F <- anova(lm(time_s ~ A + B + C + D, data = heli), fit_blk)
+
+# Question 2: add the A x C contrast (aliased with B x D)
+fit_int <- lm(time_s ~ A + B + C + D + A:C, data = heli)
+int_eff <- effects_tbl(fit_int, "A:C")
+simple <- heli |>
+  group_by(leg_width = C_leg_width, rotor_length = A_rotor_length) |>
+  summarise(m = mean(time_s), .groups = "drop") |>
+  pivot_wider(names_from = rotor_length, values_from = m,
+              names_prefix = "rotor_") |>
+  mutate(effect_of_rotor = rotor_1 - rotor_0)
+
+# Question 3: fitted values for the 8 flown combinations
+X_new <- run_summary |>
+  mutate(A = 2 * A_rotor_length - 1, B = 2 * B_leg_length - 1,
+         C = 2 * C_leg_width - 1,    D = 2 * D_paper_clip - 1)
+pred <- predict(fit, newdata = X_new, interval = "confidence")
+q3_tbl <- run_summary |>
+  select(unit, A_rotor_length, B_leg_length, C_leg_width, D_paper_clip,
+         mean_time) |>
+  bind_cols(as_tibble(pred)) |>
+  arrange(desc(fit))
+best <- q3_tbl[1, ]
+
+# helpers for inline numbers
+f2 <- function(x) sprintf("%.2f", x)
+ci2 <- function(lo, hi) sprintf("%.2f to %.2f", lo, hi)
+eff <- function(tbl, t, col) tbl[[col]][tbl$term == t]
+```
+
+## Introduction
+
+This project uses a designed experiment to study how the design of a paper helicopter affects how long it stays in the air. We consider four factors, each at two levels: rotor length, leg length, leg width, and whether a paper clip is attached to the leg. We answer three questions, using point estimates and 95% confidence intervals:
+
+1. Which factors seem to be the most important for making helicopters that fly longer?
+2. Is there any evidence that the effect of rotor length differs by leg width?
+3. What would we recommend as the ideal combination to make the helicopter fly long?
+
+We ran a half replicate of the $2^4$ factorial design (8 helicopters), dropped each helicopter 4 times, and estimated the factor effects with a linear model. We first describe the design and our reasons for it, then the data collection, and then the analysis.
+
+## Experimental Design
+
+### Response and factors
+
+The response is **flight time** in seconds, measured from the moment the helicopter is released until it touches the floor. The four factors and their levels, taken from the project instructions, are:
+
+| Letter | Factor | Low setting ($-1$) | High setting ($+1$) |
+|:---:|---|:---:|:---:|
+| A | Rotor length | 7.5 cm | 8.5 cm |
+| B | Leg length | 7.5 cm | 12.0 cm |
+| C | Leg width | 3.2 cm | 5.0 cm |
+| D | Paper clip on leg | No | Yes |
+
+: Factors and levels. {#tbl-factors}
+
+We code each factor as $-1$ at its low setting and $+1$ at its high setting. A treatment combination is named by the letters of the factors at their high setting, so $bc$ is the helicopter with long legs and wide legs, and short rotors and no paper clip; $(1)$ has every factor at its low setting.
+
+### The half replicate
+
+The full $2^4$ factorial has 16 treatment combinations, which would mean building 16 helicopters. We instead ran a **half replicate**, a $2^{4-1}$ fractional factorial design with 8 treatment combinations.
+
+We chose the 8 combinations with the strategy from class. The **defining contrast** is the highest-order interaction, ABCD. In a full $2^4$ factorial, the four-way interaction would be estimated by
+$$
+\begin{aligned}
+\hat\beta_{ABCD} = {} & \bar y_{abcd} + \bar y_{ab} + \bar y_{ac} + \bar y_{ad} + \bar y_{bc} + \bar y_{bd} + \bar y_{cd} + \bar y_{(1)} \\
+& - \bar y_{abc} - \bar y_{abd} - \bar y_{acd} - \bar y_{bcd} - \bar y_{a} - \bar y_{b} - \bar y_{c} - \bar y_{d}.
+\end{aligned}
+$$
+Our half replicate is the 8 combinations that enter this estimate with a positive sign:
+$$\{(1),\ ab,\ ac,\ ad,\ bc,\ bd,\ cd,\ abcd\}.$$
+These are the combinations with an even number of factors at the high setting.
+
+Because we observe only 8 of the 16 combinations, some effects are **aliased**: their estimates come from the same contrast of the 8 means, so the data cannot tell them apart. Using the rule from class, the effect aliased with any term is made up of the letters in the defining contrast ABCD that are not in that term. For example, A is aliased with BCD, and AC is aliased with BD.
+
+| Effect | Aliased with | | Effect | Aliased with |
+|:---:|:---:|---|:---:|:---:|
+| A | BCD | | AB | CD |
+| B | ACD | | AC | BD |
+| C | ABD | | AD | BC |
+| D | ABC | | | |
+
+: Aliased effects in our half replicate. {#tbl-alias}
+
+Each main effect is aliased with a three-way interaction, and never with another main effect or a two-way interaction. The two-way interactions are aliased with each other in pairs. The four-way interaction ABCD is the defining contrast. It cannot be estimated, and we treat it as zero.
+
+### Replication
+
+Each of the 8 treatment combinations was built once, as a single helicopter, and that helicopter was dropped **4 times**, the minimum suggested in the project description. This gives $8 \times 4 = 32$ flights. The repeated drops let us estimate flight-to-flight variability (differences in release, timing, and air currents), which is the error variance used in all confidence intervals.
+
+### Building the helicopters
+
+We built the 8 helicopters from regular printer paper following the course instructions. Each helicopter is a 5 cm-wide strip cut to a length of rotor length + leg length + 2 cm for the body. We made the leg cuts and folded legs A and C onto leg B to the required leg width, then folded the two rotor blades in opposite directions at 90° to the body. For the four combinations with factor D at its high setting ($ad$, $bd$, $cd$, $abcd$), we attached a paper clip to the bottom of the leg. Each helicopter was labeled with its unit number (1–8).
+
+### Flying procedure
+
+All flights took place in a single session at the same indoor location. To keep the measurement process constant, we kept fixed roles for all 32 flights: one of us released every helicopter from a height of approximately 6 feet, holding it by the body with the rotors level, and the other timed every flight with a phone stopwatch, starting at release and stopping when the helicopter touched the floor. Times were recorded to the hundredth of a second.
+
+### Run order
+
+We flew the helicopters in unit order, from Helicopter 1 to Helicopter 8, and dropped each one 4 times in a row before moving on to the next. The run order was **not randomized**. We discuss the consequences of this choice in the Limitations section.
+
+## Rationale for Our Design Choices
+
+### Why a half replicate
+
+The most time-consuming part of the experiment was building helicopters, not flying them. A half replicate halves the number of helicopters to build while still estimating all four main effects, which are the focus of Questions 1 and 3. The cost is aliasing, and we chose the half replicate to keep that cost as small as possible:
+
+- **Every main effect uses all 32 flights.** In our half replicate, each factor is at its high setting in 4 of the 8 combinations and at its low setting in the other 4. For example, the main effect of rotor length is estimated by comparing the average of $ab$, $ac$, $ad$, $abcd$ with the average of $(1)$, $bc$, $bd$, $cd$. This is the same reason that, in class, the replicate $\{a, b, c, abc\}$ was preferred to $\{(1), a, b, c\}$. In the second design, the effect of A can be estimated only from $\bar y_a - \bar y_{(1)}$, which uses half of the data.
+- **Main effects are aliased only with three-way interactions.** As in class, we presume the three-way interactions are negligible, so we can attribute each contrast to the main effect. (The other half, the 8 combinations with a negative sign in $\hat\beta_{ABCD}$, has the same aliasing. We used the positive-sign half, as in class.)
+- **Question 2 needs the AC interaction.** In our half replicate, AC (rotor length $\times$ leg width) is aliased with BD (leg length $\times$ paper clip). This is true for either half built from the defining contrast ABCD. AC is aliased with a two-way interaction that we have a physical reason to treat as small (see Question 2), not with a main effect.
+- **A full factorial would mostly add information we do not need.** The extra 8 helicopters would separate the two-way interactions from each other and estimate the three-way interactions, but the questions ask about only one two-way interaction (AC).
+
+### Why 4 flights per helicopter
+
+Every factorial effect is a difference between the average of the 16 flights at the high setting and the 16 flights at the low setting. With error standard deviation $\sigma$, its standard error is $\sigma\sqrt{1/16 + 1/16} = \sigma/\sqrt{8}$. With our estimate $\hat\sigma = `r f2(sigma_hat)`$ s, this is about `r f2(sigma_hat / sqrt(8))` s, so a 95% confidence interval for an effect has a half-width of about `r f2(qt(0.975, 27) * sigma_hat / sqrt(8))` s. Four drops per helicopter were quick to collect and give this precision for every main effect at once, because each flight contributes to all four comparisons.
+
+We considered building two copies of each helicopter instead of dropping one copy 4 times. That would have captured build-to-build variability (small differences in cutting and folding) in the error term, but it would have doubled the building time, which was the reason for using a half replicate in the first place. We discuss the consequence of this choice in the Limitations section.
+
+
+## Data Collection
+
+We recorded the unit number, the four factor settings, the flight number (1–4), and the flight time for each drop. The final data set has `r nrow(heli)` flights, 4 for each of the `r n_distinct(heli$unit)` helicopters, with no missing values.
+
+- **Re-drops.** A few drops were clearly faulty, for example when the helicopter hit a wall or furniture before landing or did not start spinning after release. We re-dropped the helicopter in these cases and recorded only the valid flight, so each helicopter still has exactly 4 recorded flights. Re-dropping only for faults like these, and not because a time looked unusual, keeps the recorded times from being selected on the outcome.
+- **Wear.** Because each helicopter was dropped repeatedly, the rotors became slightly bent or creased, and the paper clips could shift on the leg. We re-straightened the rotors and re-seated the paper clips between drops when needed, but some wear remains. Since each helicopter's four drops were flown in a row, any effect of wear shows up as a trend across flight number, which is balanced across treatment combinations (see the Question 1 robustness checks).
+
+## Results and Analysis
+
+### Assumptions
+
+Our analysis relies on the following assumptions:
+
+1. **Three-way interactions are negligible.** Each main-effect contrast estimates the main effect plus a three-way interaction (e.g., A + BCD). We attribute the whole contrast to the main effect.
+2. **The model for Question 1 contains main effects only.** Two-way interactions are aliased in pairs and cannot be estimated individually, so we leave them out. Because main effects are aliased only with three-way interactions, a large two-way interaction would not bias the main-effect estimates, but it would inflate the residual variance and make our intervals wider (conservative).
+3. **Leg length $\times$ paper clip (BD) is negligible.** This is needed for Question 2, because BD is aliased with AC.
+4. **Flights are independent with constant variance and approximately normal errors.** The intervals treat all 32 flights as independent. Each design point is a single helicopter, so this captures flight-to-flight but not build-to-build variability.
+5. **No drift over the session.** Because run order was not randomized, we assume flight times did not trend over the session from Helicopter 1 to Helicopter 8 (see Limitations).
+
+### Exploratory analysis
+
+```{r}
+#| label: fig-eda
+#| fig-cap: "Flight times for each helicopter (black) and helicopter means (red)."
+#| fig-height: 2.6
+#| fig-width: 6.5
+heli |>
+  mutate(label = paste0(unit, "\n", c("(1)", "ab", "ac", "ad", "bc", "bd",
+                                      "cd", "abcd")[unit])) |>
+  ggplot(aes(label, time_s)) +
+  geom_point(alpha = 0.6) +
+  stat_summary(fun = mean, geom = "point", colour = "red", size = 3) +
+  labs(x = "Helicopter (treatment combination)", y = "Time in air (s)") +
+  theme_bw()
+```
+
+@fig-eda shows the 32 flight times. Helicopter means range from `r f2(min(run_summary$mean_time))` s to `r f2(max(run_summary$mean_time))` s, and within-helicopter standard deviations range from `r f2(min(run_summary$sd_time))` s to `r f2(max(run_summary$sd_time))` s. The spread is similar across helicopters and no single flight stands out as an outlier. The residual-versus-fitted and normal Q-Q plots for the main-effects model (Appendix B) show no clear departure from constant variance or normality.
+
+### Question 1: Which factors matter most?
+
+We fit the main-effects model
+$$y_{ij} = \beta_0 + \beta_A A_i + \beta_B B_i + \beta_C C_i + \beta_D D_i + \varepsilon_{ij}$$
+by least squares, where $y_{ij}$ is the $j$-th flight of helicopter $i$. With $\pm1$ coding, the factorial effect of a factor (the average change in flight time when it moves from its low to its high setting, averaged over the other factors) is twice its coefficient. The design is balanced (each factor is at its high setting in exactly half the flights at each setting of every other factor), so each estimate is the same whether or not the other factors are in the model.
+
+```{r}
+#| label: tbl-effects
+#| tbl-cap: "Estimated main effects (seconds, high minus low) with 95% confidence intervals, from the main-effects model fit to all 32 flights."
+effects_all |>
+  transmute(Factor = paste0(factor, " (", term, ")"),
+            `Effect (s)` = sprintf("%+.2f", effect),
+            `95% CI` = sprintf("(%.2f, %.2f)", lower, upper),
+            `p-value` = sprintf("%.3f", p_value)) |>
+  kable(align = "lrrr")
+```
+
+```{r}
+#| label: fig-effects
+#| fig-cap: "Main effects with 95% confidence intervals."
+#| fig-height: 2.0
+#| fig-width: 6.5
+effects_all |>
+  ggplot(aes(effect, fct_rev(factor))) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_pointrange(aes(xmin = lower, xmax = upper)) +
+  labs(x = "Effect on time in air (s), high vs. low setting", y = NULL) +
+  theme_bw()
+```
+
+**Leg length and leg width appear to be the most important factors.** Moving leg length from 7.5 cm to 12.0 cm increases flight time by an estimated `r f2(eff(effects_all, "B", "effect"))` s (95% CI: `r ci2(eff(effects_all, "B", "lower"), eff(effects_all, "B", "upper"))`), and moving leg width from 3.2 cm to 5.0 cm increases it by `r f2(eff(effects_all, "C", "effect"))` s (95% CI: `r ci2(eff(effects_all, "C", "lower"), eff(effects_all, "C", "upper"))`). The interval for leg length just excludes 0, and the interval for leg width just includes it, so the evidence for each is borderline rather than strong. Rotor length (`r sprintf("%+.2f", eff(effects_all, "A", "effect"))` s) and the paper clip (`r sprintf("%+.2f", eff(effects_all, "D", "effect"))` s) have estimates near 0 and intervals that comfortably include 0, so we find little evidence that either matters over the ranges we tested.
+
+**Robustness checks.**
+
+- *Helicopter-level analysis.* Fitting the same model to the 8 helicopter means gives the same point estimates, because the design is balanced, but much wider intervals (for example, leg length: `r ci2(means_eff[2, 2], means_eff[2, 3])`), all of which include 0. This analysis has only 3 residual degrees of freedom, but it uses helicopter-to-helicopter variation as the error, and so it shows how much the conclusions depend on treating the 4 flights of a helicopter as independent.
+- *Flight-number trend.* Average flight time rose over the four drops of a helicopter: `r paste(f2(flight_means$m), collapse = ", ")` s for flights 1 to 4. This is consistent with wear or with the helicopters settling in after the first drop. Because flight number is balanced across treatment combinations, adding it to the model as a block factor leaves every effect estimate unchanged, but it reduces the residual standard deviation from `r f2(sigma_hat)` s to `r f2(summary(fit_blk)$sigma)` s (F-test for flight number, $p =$ `r sprintf("%.3f", flight_F[2, "Pr(>F)"])`). With this adjustment, the intervals for leg length (`r ci2(eff(effects_blk, "B", "lower"), eff(effects_blk, "B", "upper"))`) and leg width (`r ci2(eff(effects_blk, "C", "lower"), eff(effects_blk, "C", "upper"))`) both exclude 0, while those for rotor length and the paper clip still include it.
+
+Taken together, the data point to leg length and leg width as the factors that matter, with an effect of roughly 0.2 s each. With only 8 helicopters and no build-to-build replication, these conclusions should be read as suggestive.
+
+### Question 2: Does the effect of rotor length differ by leg width?
+
+The rotor length $\times$ leg width interaction is the AC contrast. In our half replicate, AC is aliased with BD (leg length $\times$ paper clip), so the estimated contrast is really AC + BD. We attribute it to AC under Assumption 3: the paper clip adds weight at the bottom of the leg and leg length changes the length of the body, and we have no physical reason to expect the effect of adding a paper clip to depend strongly on how long the leg is. If this assumption is wrong, the estimate below mixes the two interactions.
+
+We add the AC term to the main-effects model. The interaction effect is defined as half the difference between the effect of rotor length at wide legs and the effect of rotor length at narrow legs.
+
+```{r}
+#| label: tbl-simple
+#| tbl-cap: "Mean flight time (s) by rotor length and leg width, and the effect of rotor length at each leg width."
+simple |>
+  transmute(`Leg width` = if_else(leg_width == 1, "Wide (5.0 cm)", "Narrow (3.2 cm)"),
+            `Short rotor` = f2(rotor_0), `Long rotor` = f2(rotor_1),
+            `Effect of rotor length` = sprintf("%+.2f", effect_of_rotor)) |>
+  kable(align = "lrrr")
+```
+
+The estimated interaction is `r f2(int_eff$effect)` s (95% CI: `r ci2(int_eff$lower, int_eff$upper)`; $p =$ `r f2(int_eff$p_value)`). As @tbl-simple shows, going from short to long rotors changes flight time by about `r sprintf("%+.2f", simple$effect_of_rotor[simple$leg_width == 0])` s when legs are narrow but about `r sprintf("%+.2f", simple$effect_of_rotor[simple$leg_width == 1])` s when legs are wide. The confidence interval comfortably includes 0, however, so **there is no clear statistical evidence that the effect of rotor length differs by leg width**. The pattern (longer rotors may be slightly worse with wide legs) is suggestive, but with 8 helicopters we cannot distinguish it from noise.
+
+### Question 3: Recommended combination
+
+Our half replicate includes only 8 of the 16 possible combinations. A combination we did not fly could be predicted from the main-effects model, but that prediction would rely entirely on the interactions being negligible, with no direct data behind it. We therefore recommend one of the 8 combinations we flew. We compare them using both the observed helicopter means and the fitted values from the main-effects model, which pool information across all 32 flights and are less noisy than a single helicopter's mean.
+
+```{r}
+#| label: tbl-pred
+#| tbl-cap: "Observed mean and fitted flight time (s) with 95% confidence intervals for the 8 combinations flown, ordered by fitted value."
+q3_tbl |>
+  transmute(Helicopter = unit,
+            Combination = c("(1)", "ab", "ac", "ad", "bc", "bd", "cd", "abcd")[unit],
+            `Rotor` = if_else(A_rotor_length == 1, "Long", "Short"),
+            `Leg length` = if_else(B_leg_length == 1, "Long", "Short"),
+            `Leg width` = if_else(C_leg_width == 1, "Wide", "Narrow"),
+            `Clip` = if_else(D_paper_clip == 1, "Yes", "No"),
+            `Observed mean` = f2(mean_time),
+            `Fitted` = f2(fit),
+            `95% CI` = sprintf("(%.2f, %.2f)", lwr, upr)) |>
+  kable(align = "clllllrrr")
+```
+
+**Recommendation:** short rotors (7.5 cm), long legs (12.0 cm), wide legs (5.0 cm), and no paper clip; this is Helicopter `r best$unit`, combination $bc$. It has the highest fitted flight time under the main-effects model, `r f2(best$fit)` s (95% CI: `r ci2(best$lwr, best$upr)`), and its observed mean was `r f2(best$mean_time)` s. It is also consistent with Question 1: it sets the two factors that seem to matter (leg length and leg width) to their high settings and the two that do not appear to matter to the settings with slightly higher estimated flight times.
+
+- The fitted values of the top combinations differ by only about 0.05 to 0.1 s, much less than the flight-to-flight standard deviation of about `r f2(sigma_hat)` s, and their confidence intervals overlap heavily. The highest *observed* mean belongs to a different helicopter ($cd$, `r f2(max(run_summary$mean_time))` s). We therefore cannot claim that $bc$ is definitely the best of the 8.
+- Because each design point is one helicopter, build-to-build variation is mixed in with the factor effects, and the intervals above are probably too narrow.
+- A follow-up experiment that flies the other half replicate, in randomized order, would be needed to confirm this recommendation.
+
+## Limitations
+
+- **No randomization of run order.** We flew the helicopters in order from 1 to 8, so the high and low settings of each factor were not spread evenly through the session. For example, the paper clip helicopters (4, 6, 7, 8) were flown later on average than those without a clip (1, 2, 3, 5). If flight times drifted over the session (for example, if the dropper's release became smoother), part of that drift would show up in the estimated factor effects, most of all for the paper clip and leg width. Because a helicopter's position in the session is determined by its factor settings, we cannot estimate such a drift separately. Flying each helicopter's 4 drops in a row does not cause this problem, because every helicopter has one first, second, third, and fourth drop. Randomizing the order of all 32 flights would have avoided the issue at almost no cost.
+- **One helicopter per treatment combination.** The 4 flights per helicopter measure flight-to-flight variation but not build-to-build variation, so any difference in how carefully a helicopter was cut and folded is confounded with its factor settings. The helicopter-level analysis, whose intervals all include 0, shows how much this matters.
+- **Aliasing.** Main effects are aliased with three-way interactions, and the AC interaction in Question 2 is aliased with BD. Our conclusions rely on these aliased effects being negligible.
+- **Measurement.** Flight times were measured with a hand-held phone stopwatch, so reaction time adds error at both the start and the end of each flight. Keeping the same timer for every flight keeps any systematic bias constant across treatment combinations, but the added noise widens all intervals. Wear on the helicopters across repeated drops also adds variability.
+- **Small experiment.** With 8 helicopters and 32 flights, effects of about 0.2 s are at the edge of what we can detect.
+
+## Conclusion
+
+We ran a half replicate of the $2^4$ factorial design, with 8 helicopters dropped 4 times each, to study which design factors make a paper helicopter fly longer. Leg length and leg width appear to be the most important factors: making the legs longer or wider each increases flight time by about 0.2 s, although the evidence is borderline. Rotor length and the paper clip show little evidence of an effect. We find no clear evidence that the effect of rotor length depends on leg width (estimated interaction `r f2(int_eff$effect)` s, 95% CI: `r ci2(int_eff$lower, int_eff$upper)`). Among the combinations we flew, we recommend short rotors, long and wide legs, and no paper clip, with a fitted flight time of about `r f2(best$fit)` s.
+
+With more time, we would randomize the order of all flights, build two copies of each helicopter to capture build-to-build variability, and fly the other half replicate. Together the two halves form the full $2^4$ factorial, which would separate the aliased two-way interactions, including AC from BD, and let us test our recommendation against the combinations we did not fly.
+
+\newpage
+
+## Appendix
+
+### A. Data
+
+Each row of `helicopter_data.csv` is one flight: `unit` is the helicopter (1–8), the four factor columns are coded 0 (low) and 1 (high), `flight` is the drop number (1–4) for that helicopter, and `time_s` is the flight time in seconds.
+
+### B. Model diagnostics
+
+```{r}
+#| label: fig-diag
+#| fig-cap: "Residuals versus fitted values and normal Q-Q plot for the main-effects model."
+#| fig-height: 3
+#| fig-width: 6.5
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+plot(fit, which = 1:2)
+```
+
+### C. Code
+
+```{r}
+#| label: code
+#| ref.label: !expr c("setup", "fig-eda", "tbl-effects", "fig-effects", "tbl-simple", "tbl-pred", "fig-diag")
+#| echo: true
+#| eval: false
+```
